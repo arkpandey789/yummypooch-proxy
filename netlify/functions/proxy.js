@@ -6,100 +6,116 @@ const app = express();
 app.use(cors());
 
 // helper: strip the Netlify prefix so we don't loop
-const stripPrefix = (url) =>
-  url.replace(/^\/\.netlify\/functions\/proxy/, "");
+const stripPrefix = (url) => {
+  // Handle both with and without query parameters
+  const baseUrl = url.split('?')[0];
+  const queryParams = url.includes('?') ? url.substring(url.indexOf('?')) : '';
+  const cleanPath = baseUrl.replace(/^\/\.netlify\/functions\/proxy\/?/, "");
+  return cleanPath + queryParams;
+};
 
-// The base path for our proxy function
-const proxyPath = "/.netlify/functions/proxy";
-
-app.all("*", async (req, res) => { // Use app.all to handle POST etc. if needed later
+app.all("*", async (req, res) => {
   try {
     const path = stripPrefix(req.originalUrl) || "/";
-    const shopifyUrl = `https://www.yummypooch.com${path}`;
+    const shopifyUrl = `https://www.yummypooch.com${path.startsWith('/') ? path : '/' + path}`;
+    
+    console.log(`Proxying request to: ${shopifyUrl}`);
 
-    console.log(`Proxying request for: ${path} to ${shopifyUrl}`);
-
-    // Forward essential headers (add more if needed)
-    const headersToSend = {
-        "user-agent": req.headers["user-agent"] || "",
-        "accept": req.headers["accept"] || "*/*",
-        "accept-language": req.headers["accept-language"] || "en-US,en;q=0.9",
-        // Forwarding cookies might be necessary for cart/session but can be complex
-        // "cookie": req.headers["cookie"] || "",
-        // Add other headers Shopify might expect if you encounter issues
-    };
-
+    // Copy all headers from the original request
+    const headers = { ...req.headers };
+    
+    // Remove host header to avoid conflicts
+    delete headers.host;
+    
+    // Use the same HTTP method as the original request
     const shopRes = await fetch(shopifyUrl, {
-      method: req.method, // Forward the original request method
-      headers: headersToSend,
-      // Forward body for POST requests etc. (Needs body parsing middleware if used)
-      // body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
-      redirect: 'manual' // Important: Handle redirects manually if needed
+      method: req.method,
+      headers: headers,
+      body: req.method !== 'GET' && req.method !== 'HEAD' ? req.body : undefined,
+      redirect: 'follow'
     });
 
-    // --- Handle potential redirects from Shopify ---
-    if (shopRes.status >= 300 && shopRes.status < 400 && shopRes.headers.has('location')) {
-        let location = shopRes.headers.get('location');
-        console.log(`Shopify redirected (${shopRes.status}) to: ${location}`);
-        // Rewrite the redirect location to point back to the proxy
-        if (location.startsWith('https://www.yummypooch.com')) {
-            location = location.replace('https://www.yummypooch.com', proxyPath);
-        } else if (location.startsWith('/')) {
-            // Handle relative redirects
-            location = proxyPath + location;
-        }
-        // Else: it's an external redirect, let it go as is? Or block? For now, let it go.
-
-        console.log(`Rewritten redirect location: ${location}`);
-        res.redirect(shopRes.status, location);
-        return; // Stop processing
-    }
-    // --- End redirect handling ---
-
-
-    // Forward headers from Shopify response back to the client
-    // Be careful which headers you forward, avoid security-sensitive ones like set-cookie initially unless needed
-    res.setHeader("Content-Type", shopRes.headers.get("Content-Type") || "text/html; charset=utf-8");
-    res.setHeader("X-Frame-Options", "ALLOWALL"); // Keep this for Adalo webview
-    // You might need to forward other headers like cache-control etc.
-    // res.setHeader('Cache-Control', shopRes.headers.get('Cache-Control') || 'no-cache');
-
-
-    // Handle non-HTML content types (CSS, JS, Images) - Don't rewrite links in these
-    const contentType = shopRes.headers.get("Content-Type") || "";
-    if (!contentType.includes("text/html")) {
-        // For non-HTML, just stream the response body directly
-         // Node fetch response body is a ReadableStream
-        const bodyStream = shopRes.body;
-        if (bodyStream) {
-             res.status(shopRes.status);
-             bodyStream.pipe(res); // Pipe the stream directly to the response
-        } else {
-            res.sendStatus(shopRes.status);
-        }
-        return; // Stop processing
+    // Copy status code from Shopify response
+    res.status(shopRes.status);
+    
+    // Copy headers from Shopify response
+    for (const [key, value] of shopRes.headers.entries()) {
+      // Skip certain headers that might cause issues
+      if (!['content-length', 'content-encoding', 'transfer-encoding', 'connection'].includes(key.toLowerCase())) {
+        res.setHeader(key, value);
+      }
     }
 
+    // Override specific headers for proper framing
+    res.setHeader("Content-Security-Policy", "frame-ancestors *");
+    res.setHeader("X-Frame-Options", "ALLOWALL");
 
-    // --- Process HTML ---
-    let html = await shopRes.text();
-
-    // Rewrite absolute links
-    html = html.replace(/https:\/\/www\.yummypooch\.com/g, proxyPath);
-
-    // Rewrite root-relative links (href="/...", src="/...")
-    // Use a more specific regex to avoid issues with script src etc if possible
-     html = html.replace(/(href="|action=")\/(?!\/)/g, `<span class="math-inline">1</span>{proxyPath}/`); // Only for href and form actions
-     html = html.replace(/(src=")\/(?!\/)/g, `<span class="math-inline">1</span>{proxyPath}/`); // Handle src separately if needed, be careful with JS/CSS paths
-
-    // You might need more sophisticated rewriting for JavaScript-based navigation or assets loaded via JS
-
-    res.status(shopRes.status).send(html); // Send Shopify's status code
-
+    // Handle different content types appropriately
+    const contentType = shopRes.headers.get('content-type') || '';
+    
+    if (contentType.includes('text/html')) {
+      let html = await shopRes.text();
+      
+      // Rewrite absolute links to relative links
+      html = html.replace(/https:\/\/www\.yummypooch\.com\//g, "/");
+      html = html.replace(/href="https:\/\/www\.yummypooch\.com/g, 'href="');
+      html = html.replace(/action="https:\/\/www\.yummypooch\.com/g, 'action="');
+      html = html.replace(/src="https:\/\/www\.yummypooch\.com/g, 'src="');
+      
+      // Ensure all relative URLs start with the function path
+      html = html.replace(/href="\//g, 'href="/.netlify/functions/proxy/');
+      html = html.replace(/action="\//g, 'action="/.netlify/functions/proxy/');
+      html = html.replace(/src="\//g, 'src="/.netlify/functions/proxy/');
+      
+      // Fix any form submissions
+      html = html.replace(/<form([^>]*)>/g, '<form$1 data-proxy-adjusted="true">');
+      
+      // Inject a small script to handle form submissions and ajaxs calls
+      html = html.replace('</body>', `
+        <script>
+          document.addEventListener('DOMContentLoaded', function() {
+            // Handle form submissions
+            document.querySelectorAll('form:not([data-proxy-handled])').forEach(form => {
+              form.setAttribute('data-proxy-handled', 'true');
+              form.addEventListener('submit', function(e) {
+                const action = this.getAttribute('action');
+                if (action && !action.includes('/.netlify/functions/proxy')) {
+                  this.setAttribute('action', '/.netlify/functions/proxy' + (action.startsWith('/') ? action : '/' + action));
+                }
+              });
+            });
+            
+            // Override fetch and XMLHttpRequest to proxy requests
+            const originalFetch = window.fetch;
+            window.fetch = function(url, options) {
+              if (url && typeof url === 'string' && url.startsWith('/') && !url.startsWith('/.netlify/functions/proxy')) {
+                url = '/.netlify/functions/proxy' + url;
+              }
+              return originalFetch(url, options);
+            };
+            
+            const originalOpen = XMLHttpRequest.prototype.open;
+            XMLHttpRequest.prototype.open = function(method, url, ...rest) {
+              if (url && typeof url === 'string' && url.startsWith('/') && !url.startsWith('/.netlify/functions/proxy')) {
+                url = '/.netlify/functions/proxy' + url;
+              }
+              return originalOpen.call(this, method, url, ...rest);
+            };
+          });
+        </script>
+      </body>`);
+      
+      res.send(html);
+    } else {
+      // For non-HTML responses, just pipe through the response body
+      const buffer = await shopRes.arrayBuffer();
+      res.send(Buffer.from(buffer));
+    }
   } catch (err) {
     console.error("Proxy error:", err);
-    res.status(500).send("Internal proxy error");
+    res.status(500).send(`Internal proxy error: ${err.message}`);
   }
 });
 
+// Export for Netlify
 export const handler = builder(app);
