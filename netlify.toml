@@ -5,9 +5,16 @@
 [functions]
   node_bundler = "esbuild"
   external_node_modules = ["express", "cors"]
-  
+  # Increase timeout to 30 seconds (max allowed on Netlify)
+  included_files = ["netlify/functions/**"]
+  timeout = 30
+
 [[redirects]]
   from = "/*"
   to = "/.netlify/functions/proxy/:splat"
   status = 200
   force = true
+
+# Add for debugging
+[dev]
+  debug = true
