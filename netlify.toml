@@ -1,21 +1,7 @@
+[build]
+  command   = "npm install"
+  functions = "netlify/functions"
 
 [functions]
   node_bundler = "esbuild"
-  external_node_modules   = ["express","cors"]
-
-[[redirects]]
-  from = "/"
-  to = "/.netlify/functions/proxy?path=/"
-  status = 200
-  force = true
-
-[[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/proxy?path=/:splat"
-  status = 200
-  force = true
-
-[build]
-  functions = "netlify/functions"
-  command   = "npm install"
-  
+  external_node_modules = ["express","cors"]  # optional
