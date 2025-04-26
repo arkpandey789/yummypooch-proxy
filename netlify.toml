@@ -1,0 +1,15 @@
+
+[functions]
+  node_bundler = "esbuild"
+
+[[redirects]]
+  from = "/"
+  to = "/.netlify/functions/proxy?path=/"
+  status = 200
+  force = true
+
+[[redirects]]
+  from = "/*"
+  to = "/.netlify/functions/proxy?path=/:splat"
+  status = 200
+  force = true
