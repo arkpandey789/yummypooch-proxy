@@ -1,33 +1,35 @@
-import express from 'express';
-import fetch from 'node-fetch';
-import cors from 'cors';
+import express from "express";
+import cors from "cors";
+import fetch from "node-fetch";
+import { builder } from "@netlify/functions";
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-
 app.use(cors());
 
-app.get('*', async (req, res) => {
-  const shopifyURL = `https://www.yummypooch.com${req.originalUrl}`;
+app.get("*", async (req, res) => {
   try {
-    const response = await fetch(shopifyURL, {
-      headers: { 'User-Agent': req.headers['user-agent'] }
+    // Build target Shopify URL
+    const path = req.originalUrl || "/";
+    const targetUrl = `https://www.yummypooch.com${path}`;
+
+    // Fetch Shopify page
+    const shopifyRes = await fetch(targetUrl, {
+      headers: { "User-Agent": req.headers["user-agent"] || "" }
     });
-    let html = await response.text();
+    let html = await shopifyRes.text();
 
-    // ↓ REWRITE absolute links to go through your proxy:
-    html = html.replace(/https:\/\/www\.yummypooch\.com/g, '');
+    // Rewrite all absolute Shopify links to relative
+    html = html.replace(/https:\/\/www\.yummypooch\.com/g, "");
 
-    res.setHeader('Content-Type', 'text/html; charset=utf-8');
-    // remove frame-blocking header if needed
-    res.setHeader('X-Frame-Options', 'ALLOWALL');
+    // Force allow embedding
+    res.setHeader("Content-Type", "text/html; charset=utf-8");
+    res.setHeader("X-Frame-Options", "ALLOWALL");
 
-    res.send(html);
+    return res.send(html);
   } catch (err) {
-    res.status(500).send('Proxy error: ' + err.toString());
+    return res.status(500).send(`Proxy error: ${err.toString()}`);
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Proxy running on port ${PORT}`);
-});
+// Expose the Express app as a Netlify Function
+export const handler = builder(app);
