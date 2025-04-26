@@ -1,32 +1,33 @@
-
+import express from 'express';
 import fetch from 'node-fetch';
+import cors from 'cors';
 
-export async function handler(event) {
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.use(cors());
+
+app.get('*', async (req, res) => {
+  const shopifyURL = `https://www.yummypooch.com${req.originalUrl}`;
   try {
-    // Grab the requested path from the query string (?path=...)
-    const path = event.queryStringParameters && event.queryStringParameters.path ? event.queryStringParameters.path : '/';
-    // Build the Shopify URL
-    const targetUrl = `https://www.yummypooch.com${path}`;
-    const response = await fetch(targetUrl, {
-      headers: {
-        // Pass through user agent so Shopify serves proper mobile/desktop version
-        'User-Agent': event.headers['user-agent'] || ''
-      }
+    const response = await fetch(shopifyURL, {
+      headers: { 'User-Agent': req.headers['user-agent'] }
     });
-    const html = await response.text();
-    return {
-      statusCode: 200,
-      headers: {
-        'Content-Type': 'text/html; charset=utf-8',
-        // Allow embedding inside your Adalo WebView
-        'X-Frame-Options': 'ALLOWALL'
-      },
-      body: html
-    };
+    let html = await response.text();
+
+    // ↓ REWRITE absolute links to go through your proxy:
+    html = html.replace(/https:\/\/www\.yummypooch\.com/g, '');
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    // remove frame-blocking header if needed
+    res.setHeader('X-Frame-Options', 'ALLOWALL');
+
+    res.send(html);
   } catch (err) {
-    return {
-      statusCode: 500,
-      body: 'Proxy error: ' + err.toString()
-    };
+    res.status(500).send('Proxy error: ' + err.toString());
   }
-}
+});
+
+app.listen(PORT, () => {
+  console.log(`Proxy running on port ${PORT}`);
+});
