@@ -7,5 +7,8 @@
     "cors": "^2.8.5",
     "node-fetch": "^3.3.1",
     "@netlify/functions": "^1.0.0"
+  },
+  "devDependencies": {
+    "@netlify/plugin-functions-core": "^1.0.0"
   }
 }
