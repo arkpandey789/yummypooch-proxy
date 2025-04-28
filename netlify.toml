@@ -1,12 +1,15 @@
 # netlify.toml
+
 [[redirects]]
   from     = "/*"
   to       = "https://www.yummypooch.com/:splat"
-  status   = 200      # "proxy" mode
-  force    = true     # override everything
+  status   = 200      # <-- proxy mode
+  force    = true     # <-- override everything
 
 [[headers]]
   for = "/*"
   [headers.values]
-    X-Frame-Options         = "ALLOWALL"
+    # Allow our Netlify site to be iframed anywhere (including Adalo)
     Content-Security-Policy = "frame-ancestors *;"
+    # Remove Shopify’s X-Frame-Options
+    X-Frame-Options         = ""
