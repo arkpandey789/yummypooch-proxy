@@ -1,15 +1,7 @@
 # netlify.toml
 
-[[redirects]]
-  from     = "/*"
-  to       = "https://www.yummypooch.com/:splat"
-  status   = 200      # <-- proxy mode
-  force    = true     # <-- override everything
+[build]
+  # (optional) point to your edge functions directory
+  functions = "netlify/edge-functions"
 
-[[headers]]
-  for = "/*"
-  [headers.values]
-    # Allow our Netlify site to be iframed anywhere (including Adalo)
-    Content-Security-Policy = "frame-ancestors *;"
-    # Remove Shopify’s X-Frame-Options
-    X-Frame-Options         = ""
+# No redirects here—Edge Function will handle all proxying
