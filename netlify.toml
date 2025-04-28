@@ -1,7 +1,4 @@
 # netlify.toml
-
 [build]
-  # (optional) point to your edge functions directory
-  functions = "netlify/edge-functions"
-
-# No redirects here—Edge Function will handle all proxying
+  # this is the default directory for your strip-frame.js
+  edge_functions = "netlify/edge-functions"
