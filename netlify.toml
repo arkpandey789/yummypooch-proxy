@@ -1,13 +1,16 @@
-[build]
-  command = "npm install"
-  functions = "netlify/functions"
+# netlify.toml
 
-[functions]
-  node_bundler = "esbuild"
-  external_node_modules = ["express", "cors"]
-  
+# 1) Proxy every path to your Shopify store:
 [[redirects]]
-  from = "/*"
-  to = "/.netlify/functions/proxy/:splat"
-  status = 200
-  force = true
+  from     = "/*"
+  to       = "https://www.yummypooch.com/:splat"
+  status   = 200    # "200" → proxy rather than redirect
+  force    = true   # override any existing content
+
+# 2) Override any frame-busting headers so Adalo can embed in its Web View:
+[[headers]]
+  for = "/*"
+  [headers.values]
+    X-Frame-Options = "ALLOWALL"
+    # (optionally) relax CSP if you run into frame-ancestor issues:
+    Content-Security-Policy = "frame-ancestors *;"
