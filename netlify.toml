@@ -2,11 +2,11 @@
 [[redirects]]
   from     = "/*"
   to       = "https://www.yummypooch.com/:splat"
-  status   = 200
-  force    = true
+  status   = 200      # "proxy" mode
+  force    = true     # override everything
 
 [[headers]]
   for = "/*"
   [headers.values]
-    X-Frame-Options           = "ALLOWALL"
-    Content-Security-Policy   = "frame-ancestors *;"
+    X-Frame-Options         = "ALLOWALL"
+    Content-Security-Policy = "frame-ancestors *;"
