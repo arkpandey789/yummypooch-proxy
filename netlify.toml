@@ -1,9 +1,9 @@
 [build]
-  # point Netlify at your Functions folder
+  # Point to the Functions folder
   functions = "netlify/functions"
 
+# Redirect all paths into our proxy function
 [[redirects]]
-  # catch all requests and send them to our proxy function
   from     = "/*"
   to       = "/.netlify/functions/proxy/:splat"
   status   = 200    # proxy mode
