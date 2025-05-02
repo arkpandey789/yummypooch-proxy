@@ -1,111 +1,95 @@
-import express from "express";
-import cors from "cors";
-import fetch from "node-fetch";
-import { builder } from "@netlify/functions";
+import { Handler } from "@netlify/functions";
 
-const app = express();
-
-// allow all origins (Adalo WebView)
-app.use(cors());
-
-// make sure we can proxy POST/PUT bodies
-app.use(express.raw({ type: "*/*", limit: "10mb" }));
-
-// helper to strip the Netlify Functions prefix
-function stripPrefix(originalUrl) {
-  const [base, query] = originalUrl.split("?");
-  const cleanBase = base.replace(/^\/.netlify\/functions\/proxy/, "");
-  return cleanBase + (query ? "?" + query : "");
-}
-
-app.all("/*", async (req, res) => {
-  const path = stripPrefix(req.originalUrl) || "/";
-  const target = `https://www.yummypooch.com${path.startsWith("/") ? path : "/" + path}`;
-
+export const handler: Handler = async (event) => {
   try {
+    // figure out what path+query the user asked for
+    const rawPath = event.path.replace(/^\/\.netlify\/functions\/proxy/, "") || "/";
+    const query   = event.rawQuery ? "?" + event.rawQuery : "";
+    const upstreamUrl = `https://www.yummypooch.com${rawPath}${query}`;
+
     // forward the request to Shopify
-    const shopRes = await fetch(target, {
-      method: req.method,
-      headers: {
-        ...req.headers,
-        host: "www.yummypooch.com",        // ensure correct host
-      },
-      body: ["GET", "HEAD"].includes(req.method) ? undefined : req.body,
-      redirect: "manual",
+    const shopRes = await fetch(upstreamUrl, {
+      method:  event.httpMethod,
+      headers: { ...event.headers, host: "www.yummypooch.com" },
+      body:    ["GET","HEAD"].includes(event.httpMethod) ? undefined : event.body,
+      redirect:"manual",
     });
 
-    // copy status
-    res.status(shopRes.status);
-
-    // copy response headers (including Set-Cookie)
-    shopRes.headers.forEach((value, key) => {
-      if (!["content-length", "content-encoding", "transfer-encoding", "connection"].includes(key.toLowerCase())) {
-        res.setHeader(key, value);
+    // copy + scrub response headers
+    const headers = {};
+    shopRes.headers.forEach((v,k) => {
+      const key = k.toLowerCase();
+      if (!["content-length","content-encoding","transfer-encoding","connection"].includes(key)
+          && key !== "x-frame-options"
+          && key !== "content-security-policy") {
+        headers[k] = v;
       }
     });
-
-    // override frame-busting and allow embedding in Adalo
-    res.setHeader("X-Frame-Options", "ALLOWALL");
-    res.setHeader("Content-Security-Policy", "frame-ancestors *;");
+    // inject permissive framing
+    headers["X-Frame-Options"]         = "ALLOWALL";
+    headers["Content-Security-Policy"] = "frame-ancestors *";
 
     const contentType = shopRes.headers.get("content-type") || "";
 
     if (contentType.includes("text/html")) {
+      // pull in the HTML
       let html = await shopRes.text();
 
       // rewrite absolute Shopify URLs → relative
-      html = html.replace(/https:\/\/www\.yummypooch\.com\//g, "/");
-      html = html.replace(/(href|src|action)=["']https:\/\/www\.yummypooch\.com/g, '$1="');
+      html = html
+        .replace(/https:\/\/www\.yummypooch\.com\//g, "/")
+        .replace(/(href|src|action)=["']https:\/\/www\.yummypooch\.com/g, "$1=\"");
 
       // prefix all relative links/forms/assets with our function
-      html = html.replace(/(href|src|action)=["']\//g, `$1="/.netlify/functions/proxy/`);
+      html = html.replace(/(href|src|action)=["']\//g, '$1="/.netlify/functions/proxy/');
 
-      // inject a small script before </body> that
-      // • rewrites any dynamic fetch()/XHR to go through us
-      // • fixes any remaining form actions
+      // inject a small proxy-script before </body>
       const injector = `<script>
-  document.addEventListener('DOMContentLoaded', function() {
-    // proxy-ify forms
+  document.addEventListener('DOMContentLoaded', () => {
+    // proxy-ify all forms
     document.querySelectorAll('form').forEach(form => {
-      if (!form.dataset.proxyHandled) {
-        form.dataset.proxyHandled = 'true';
-        let act = form.getAttribute('action') || '/';
-        if (act.startsWith('/')) {
-          form.action = '/.netlify/functions/proxy' + act;
-        }
+      if (!form.dataset._proxied) {
+        form.dataset._proxied = true;
+        const act = form.getAttribute('action') || '/';
+        if (act.startsWith('/')) form.action = '/.netlify/functions/proxy' + act;
       }
     });
-    // proxy-ify fetch
+    // proxy-ify fetch()
     const _fetch = window.fetch;
-    window.fetch = function(input, init) {
-      if (typeof input === 'string' && input.startsWith('/')) {
-        input = '/.netlify/functions/proxy' + input;
-      }
-      return _fetch(input, init);
-    };
-    // proxy-ify XHR
-    const _open = XMLHttpRequest.prototype.open;
-    XMLHttpRequest.prototype.open = function(method, url, ...args) {
+    window.fetch = (url, opts) => {
       if (typeof url === 'string' && url.startsWith('/')) {
         url = '/.netlify/functions/proxy' + url;
       }
-      return _open.call(this, method, url, ...args);
+      return _fetch(url, opts);
+    };
+    // proxy-ify XHR
+    const _open = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function(m,u,...) {
+      if (typeof u === 'string' && u.startsWith('/')) {
+        u = '/.netlify/functions/proxy' + u;
+      }
+      return _open.call(this, m, u, ...arguments);
     };
   });
-</script>`;
+</script></body>`;
+      html = html.replace(/<\/body>/i, injector);
 
-      html = html.replace(/<\/body>/i, injector + "</body>");
-      return res.send(html);
+      return {
+        statusCode: shopRes.status,
+        headers,
+        body: html,
+      };
+    } else {
+      // for images, CSS, JSON, etc. – base64
+      const buf = await shopRes.arrayBuffer();
+      return {
+        statusCode: shopRes.status,
+        headers,
+        body: Buffer.from(buf).toString("base64"),
+        isBase64Encoded: true,
+      };
     }
-
-    // non-HTML (images, CSS, JS, JSON, etc.)
-    const buf = await shopRes.arrayBuffer();
-    return res.send(Buffer.from(buf));
   } catch (err) {
-    console.error("Proxy error:", err);
-    res.status(500).send("Internal proxy error");
+    return { statusCode: 500, body: `Proxy error: ${err.message}` };
   }
-});
-
-// Netlify Functions entrypoint
-export const handler = builder(app);
+};
