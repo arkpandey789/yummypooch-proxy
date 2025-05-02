@@ -7,5 +7,4 @@
 #   status   = 200    # proxy mode
 #   force    = true
 [build]
-  # Tell Netlify where to find Edge Functions
   edge_functions = "netlify/edge-functions"
